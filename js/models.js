@@ -138,6 +138,13 @@ export function soldierGeos(p) {
     t.push(cylX(0.07, 0.32, p.roll || 0x8a7a5a, 0, 0.87, 0.25, 10));
   }
   if (p.belly) t.push(sph(0.22, p.shirt, 0, 0.58, -0.08, 1, 0.9, 0.9, 12));
+  if (p.tnt) {
+    for (const x of [-0.11, 0, 0.11]) t.push(cylY(0.062, 0.36, 0xd62020, x, 0.66, -0.27, 10));
+    t.push(box(0.36, 0.06, 0.15, 0x1d1d1d, 0, 0.7, -0.27));
+    t.push(cylY(0.012, 0.18, 0x333333, 0.05, 0.92, -0.27, 6));
+    t.push(sph(0.05, 0xffd23a, 0.05, 1.02, -0.27, 1, 1, 1, 8));
+    t.push(sph(0.03, 0xff6a00, 0.05, 1.05, -0.27, 1, 1, 1, 6));
+  }
   if (p.pads) for (const s of [-1, 1]) t.push(sph(0.11, p.helmet, s * 0.25, 0.82, 0, 1, 0.7, 1, 10));
   if (p.shield) {
     t.push(box(0.5, 0.66, 0.05, 0x8a94a6, -0.05, 0.66, -0.36));
@@ -247,6 +254,7 @@ export const PALETTES = {
   armored: { skin: 0xe8b98c, shirt: 0x50565f, vest: 0x2e333a, pants: 0x3b414d, helmet: 0x30343c, helmet2: 0x23262c, band: 0xe8343f, pack: false, boots: 0x16181c, angry: true, shield: true, pads: true },
   giant:   { skin: 0xe8a98c, shirt: 0x8a1f2b, vest: 0x5c1520, pants: 0x3a1f1a, helmet: 0x5c1520, hat: 'spiked', pack: false, boots: 0x16181c, angry: true, belly: true, pads: true },
   brute:   { skin: 0x8fd16a, shirt: 0x6b3fbf, vest: 0x4a2a8a, pants: 0x3a1f5c, helmet: 0x2a1040, hat: 'spiked', pack: false, boots: 0x16181c, angry: true, belly: true, pads: true, nose: 0x6fb04e },
+  bomber:  { skin: 0xf2c08c, shirt: 0x2b2b2b, vest: 0x1d1d1d, pants: 0x3a3a3a, helmet: 0xd62839, hat: 'bandana', pack: false, boots: 0x16181c, angry: true, tnt: true },
   recruit: { skin: 0xffcfa3, shirt: 0xd8dde6, vest: 0xb5bdcb, pants: 0x7a8496, helmet: 0x9aa4b4, helmet2: 0x8893a3, band: 0x5a6476, pack: 0x7a7060, boots: 0x4a3524, cheeks: true },
 };
 

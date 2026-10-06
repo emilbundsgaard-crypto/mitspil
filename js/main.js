@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from '../vendor/addons/RoomEnvironment.js';
 import * as models from './models.js';
 import { save, persist, fmt } from './save.js';
-import { sfx, unlockAudio } from './audio.js';
+import { sfx, unlockAudio, musicStart, musicStop, musicIntensity } from './audio.js';
 import { WEAPONS } from './weapons.js';
 import * as tech from './tech.js';
 import * as BOSSES from './bosses.js';
@@ -74,6 +74,7 @@ const enemyR = {
   runner: new UnitRenderer(scene, soldierGeos(PALETTES.runner), 250),
   armored: new UnitRenderer(scene, soldierGeos(PALETTES.armored), 250),
   giant: new UnitRenderer(scene, soldierGeos(PALETTES.giant), 40, { pose: 'brute' }),
+  bomber: new UnitRenderer(scene, soldierGeos(PALETTES.bomber), 150),
 };
 
 // bullets: bright core + additive glow
@@ -141,7 +142,7 @@ function newRun(startWave, demo = false) {
     fireT: 0, heroT: 0, droneT: 0, grenadeT: 4, medicT: 0, strikeCd: 0, nukeCd: 0, shield: stats.shieldHits,
     coins: 0, kills: 0, bosses: 0, peak: 0, secondWindUsed: false, over: false, overT: 0, time: 0, plane: null,
     drones: [], hero: stats.commander > 0, buffs: {}, vehicles: [], diff: diffById(save.difficulty), stats, demo,
-    radius: 1, frontZ: SQUAD_Z,
+    radius: 1, frontZ: SQUAD_Z, combo: 0, comboT: 0, bestCombo: 0,
   };
   let men = stats.startMen;
   if (startWave > 1) {
@@ -169,6 +170,7 @@ const TYPES = {
   runner:  { hp: 0.55, speed: 7.0, scale: 0.92, bite: 1, coin: 1, r: 0.4 },
   armored: { hp: 3.2, speed: 2.8, scale: 1.15, bite: 2, coin: 3, r: 0.5 },
   giant:   { hp: 22, speed: 2.1, scale: 2.4, bite: 7, coin: 15, r: 0.5 },
+  bomber:  { hp: 0.8, speed: 5.4, scale: 1.0, bite: 1, coin: 2, r: 0.42 },
 };
 
 function genWave(w) {
@@ -182,8 +184,9 @@ function genWave(w) {
     for (let i = 0; i < count; i++) {
       const r = Math.random();
       let t = 'grunt';
-      if (w >= 3 && r < 0.12 + Math.min(0.18, w * 0.006)) t = 'runner';
-      else if (w >= 6 && r < 0.32 + Math.min(0.18, w * 0.005)) t = 'armored';
+      if (w >= 4 && r < 0.06 + Math.min(0.06, w * 0.002)) t = 'bomber';
+      else if (w >= 3 && r < 0.18 + Math.min(0.18, w * 0.006)) t = 'runner';
+      else if (w >= 6 && r < 0.38 + Math.min(0.18, w * 0.005)) t = 'armored';
       mix.push(t);
     }
     const giants = (w >= 8 && Math.random() < 0.35 + w * 0.01 ? 1 : 0) + (w >= 20 && Math.random() < 0.5 ? 1 : 0) + (w >= 60 ? 1 : 0) + (w >= 120 ? 1 : 0);
@@ -213,7 +216,8 @@ function gatePair(w) {
   const mult = () => ({ op: 'x', v: w > 10 && Math.random() < 0.15 ? 4 : Math.random() < 0.65 ? 2 : 3 });
   const minus = () => ({ op: '-', v: Math.round((3 + w * 1.1 + rand(0, 4)) * S.diff.dmg) });
   const div = () => ({ op: '÷', v: Math.random() < 0.7 ? 2 : 3 });
-  const good = () => (Math.random() < 0.6 ? plus() : mult());
+  const special = () => pick(S.weapon < WEAPONS.length - 1 ? [{ op: 'dmg', v: 15 }, { op: 'rate', v: 12 }, { op: 'gun', v: 1 }] : [{ op: 'dmg', v: 15 }, { op: 'rate', v: 12 }]);
+  const good = () => (w >= 2 && Math.random() < 0.16 ? special() : Math.random() < 0.6 ? plus() : mult());
   const bad = () => (Math.random() < 0.65 ? minus() : div());
   const r = Math.random();
   const g2 = 0.3 / S.diff.dmg;
@@ -233,6 +237,7 @@ function setupWave(w, first = false) {
   S.shield = stats.shieldHits;
   env.setBiome(Math.floor((w - 1) / 10), first);
   if (S.demo) return;
+  musicIntensity(w >= 30 ? 1 : 0);
   const boss = w % 5 === 0;
   banner(`WAVE ${w}`, boss ? (w % 50 === 0 ? '☠ MEGA BOSS INCOMING ☠' : 'BOSS INCOMING!') : BIOMES[env.biome].name.toUpperCase(), boss);
 }
@@ -387,14 +392,17 @@ function spawnGates(pair) {
   });
   made[0].twin = made[1]; made[1].twin = made[0];
 }
-const gateGood = (g) => g.op === '+' || g.op === 'x';
+const SPECIAL_GATE = { dmg: (v) => `+${v}% DMG`, rate: (v) => `+${v}% RATE`, gun: () => 'WEAPON UP' };
+const gateGood = (g) => g.op === '+' || g.op === 'x' || !!SPECIAL_GATE[g.op];
 function styleGate(g) {
   const u = g.mesh.userData;
   const good = gateGood(g);
-  u.panelMat.color.setHex(g.golden ? 0xffc531 : good ? 0x3aa0ff : 0xff3b4e);
-  u.frameMat.color.setHex(g.golden ? 0xffd34a : good ? 0x2f7cf0 : 0xd62839);
-  u.lightMat.color.setHex(g.golden ? 0xfff1b0 : good ? 0xbfe6ff : 0xffc0c8);
-  drawLabel(u.label, (g.op === 'x' ? '×' : g.op) + fmt(g.v), { fill: '#ffffff', stroke: g.golden ? '#8a5200' : good ? '#0d3c8f' : '#7a0f1c' });
+  const sp = SPECIAL_GATE[g.op];
+  u.panelMat.color.setHex(g.golden ? 0xffc531 : sp ? 0xa46bff : good ? 0x3aa0ff : 0xff3b4e);
+  u.frameMat.color.setHex(g.golden ? 0xffd34a : sp ? 0x8a4fff : good ? 0x2f7cf0 : 0xd62839);
+  u.lightMat.color.setHex(g.golden ? 0xfff1b0 : sp ? 0xe6d6ff : good ? 0xbfe6ff : 0xffc0c8);
+  const txt = sp ? sp(g.v) : (g.op === 'x' ? '×' : g.op) + fmt(g.v);
+  drawLabel(u.label, txt, { fill: '#ffffff', stroke: g.golden ? '#8a5200' : sp ? '#3a1a7a' : good ? '#0d3c8f' : '#7a0f1c' });
 }
 function spawnBarrel(x) {
   const g = buildBarrel();
@@ -424,6 +432,7 @@ function spawnBoss() {
   document.getElementById('boss-name').textContent = B.name;
   document.getElementById('boss-bar').classList.remove('hidden');
   sfx('boss');
+  musicIntensity(2);
   banner(B.name, B.title || 'BOSS FIGHT', true);
 }
 
@@ -546,9 +555,35 @@ function damageEnemy(e, dmg) {
   e.flash = 1;
   if (e.hp <= 0) { e.dead = true; killEnemy(e); }
 }
+const COMBO_MS = [[25, 'KILLING SPREE!'], [50, 'RAMPAGE!'], [100, 'UNSTOPPABLE!'], [200, 'GODLIKE!'], [400, 'LEGENDARY!'], [800, 'WAR MACHINE!'], [1500, 'APOCALYPSE!']];
+function addCombo() {
+  S.combo++;
+  S.comboT = 2.5;
+  if (S.combo > S.bestCombo) S.bestCombo = S.combo;
+  const m = COMBO_MS.find(([n]) => n === S.combo);
+  if (m) {
+    const c = Math.round(S.combo * (1 + S.wave / 5));
+    earn(c);
+    shout(m[1], `${S.combo} KILLS · +${fmt(earnValue(c))} COINS`);
+    sfx('powerup');
+  }
+}
+function bomberBlast(e) {
+  const r = 2.8;
+  explosion(e.x, 0.8, e.z, r, 0xff5a2a);
+  sfx('explode');
+  shake = Math.max(shake, 0.35);
+  areaDamage(e.x, e.z, r, enemyHp(S.wave) * 3 + perSoldierDmg() * 4, { noFx: true, bossMult: 0.2 });
+  if (e.z > S.frontZ - r - 1 && S.allies.length) {
+    const k = hurtSquad(Math.round((2 + S.wave * 0.06) * S.diff.dmg), { x: e.x, z: e.z, radius: r });
+    if (k) floater(e.x, 2, e.z, `-${k}`, '#ff6b7a', 32);
+  }
+}
 function killEnemy(e) {
   S.kills++;
   save.kills++;
+  addCombo();
+  if (e.type === 'bomber') bomberBlast(e);
   const col = e.type === 'armored' ? 0x3b3f4a : e.type === 'runner' ? 0xff9a1f : 0xe8343f;
   burst(e.x, 0.6 * e.s, e.z, col, e.type === 'giant' ? 24 : 6, 5 * Math.sqrt(e.s));
   burst(e.x, 0.6 * e.s, e.z, 0xf3e6d6, e.type === 'giant' ? 12 : 3, 4);
@@ -589,6 +624,7 @@ function killBoss() {
   addAllies(men);
   floater(S.squadX, 2.5, SQUAD_Z, `+${men} 🧍`, '#7fd0ff', 28);
   if (S.weapon < WEAPONS.length - 1 && Math.random() < 0.5) setWeapon(S.weapon + 1);
+  musicIntensity(S.wave >= 30 ? 1 : 0);
   sfx('explode');
 }
 function explosion(x, y, z, r, color = 0xffa030) {
@@ -719,7 +755,7 @@ function updateBullets(dt) {
   }
 }
 function chargeGate(g) {
-  if (g.op === 'x' || g.op === '÷') return;
+  if (g.op !== '+' && g.op !== '-') return;
   g.hits++;
   const bps = fireRate() * Math.min(totalMen(), 240 / fireRate());
   const need = Math.max(3, bps / 5) / stats.gateShoot;
@@ -734,6 +770,15 @@ function chargeGate(g) {
 function passGate(g) {
   g.used = true;
   if (g.twin) g.twin.used = true;
+  if (SPECIAL_GATE[g.op]) {
+    if (g.op === 'dmg') { S.runDmg *= 1 + g.v / 100; floater(S.squadX, 2.6, SQUAD_Z - 1, `+${g.v}% DAMAGE`, '#ff9aa4', 38); }
+    if (g.op === 'rate') { S.runRate *= 1 + g.v / 100; floater(S.squadX, 2.6, SQUAD_Z - 1, `+${g.v}% FIRE RATE`, '#ffe066', 38); }
+    if (g.op === 'gun') setWeapon(S.weapon + 1);
+    sfx('gateGood');
+    burst(S.squadX, 1.5, SQUAD_Z - 1, 0xc9a6ff, 24, 6);
+    g.fade = 1;
+    return;
+  }
   const n = totalMen();
   let delta = 0;
   if (g.op === '+') delta = g.v;
@@ -872,9 +917,14 @@ function updateEnemies(dt) {
     e.z += (S.speed + (frozen ? 0 : e.speed)) * dt;
     if (!frozen) e.phase += dt * (6 + e.speed * 1.4) / e.s;
     if (e.flash > 0) e.flash = Math.max(0, e.flash - dt * 6);
+    if (e.type === 'bomber' && e.z > -30) e.flash = Math.max(e.flash, Math.sin(S.time * 18) > 0.3 ? 0.55 : 0);
     if (e.z > -34 && !frozen) {
       const tx = clamp(S.squadX + (e.ox || 0) * 0.5, -ROAD_HALF + 0.4, ROAD_HALF - 0.4);
       e.x += clamp(tx - e.x, -3.2 * dt, 3.2 * dt);
+    }
+    if (e.type === 'bomber' && e.z > frontLine - 1.5 && S.allies.length) {
+      const near = nearestAlly(e.x, e.z);
+      if (near.i >= 0 && near.d < 1.1 + e.r) { e.dead = true; bomberBlast(e); continue; }
     }
     if (e.z > frontLine - 1.5 * e.s && (S.allies.length || S.vehicles.length)) {
       let absorbed = false;
@@ -1081,7 +1131,14 @@ function banner(text, sub = '', boss = false) {
   void el.offsetWidth;
   el.classList.add('show');
 }
-let lastHud = '', lastBuffs = '';
+function shout(text, sub = '') {
+  const el = $('shout');
+  el.innerHTML = `${text}${sub ? `<small>${sub}</small>` : ''}`;
+  el.classList.remove('show');
+  void el.offsetWidth;
+  el.classList.add('show');
+}
+let lastHud = '', lastBuffs = '', lastCombo = -1;
 function updateHud(dt) {
   if (!S || S.demo) return;
   const n = totalMen();
@@ -1103,6 +1160,16 @@ function updateHud(dt) {
     $('hud-weapon-ico').textContent = W.icon;
     $('hud-wstats').textContent = `DMG ${fmt(perSoldierDmg())} · ${fireRate().toFixed(1)}/s`;
   }
+  if (S.combo !== lastCombo) {
+    lastCombo = S.combo;
+    const el = $('combo');
+    el.classList.toggle('hidden', S.combo < 5);
+    if (S.combo >= 5) {
+      el.querySelector('b').textContent = S.combo;
+      el.style.fontSize = `${Math.min(46, 22 + Math.log2(S.combo) * 3)}px`;
+    }
+  }
+  if (S.combo >= 5) $('combo-bar').style.width = `${(S.comboT / 2.5) * 100}%`;
   const bk = Object.entries(S.buffs).filter(([, t]) => t > 0).map(([k, t]) => `${k}:${Math.ceil(t)}`).join('|');
   if (bk !== lastBuffs) {
     lastBuffs = bk;
@@ -1120,6 +1187,7 @@ function updateHud(dt) {
 // ------------------------------------------------------------ main loop
 function stepGame(dt) {
   S.time += dt;
+  if (S.comboT > 0) { S.comboT -= dt; if (S.comboT <= 0) S.combo = 0; }
   let want = Math.min(12, BASE_SPEED + S.wave * 0.02);
   if (S.boss && S.boss.holdWorld) want = 0;
   if (!S.allies.length) want = 0;
@@ -1208,8 +1276,16 @@ function resize() {
   camera.fov = clamp(2 * Math.atan(Math.tan((50 * Math.PI) / 360) * need) * (180 / Math.PI), 50, 92);
   camera.updateProjectionMatrix();
 }
+function applyQuality() {
+  const low = save.quality === 'low';
+  renderer.setPixelRatio(low ? 1 : Math.min(window.devicePixelRatio, 1.75));
+  sun.castShadow = !low;
+  resize();
+  const b = document.getElementById('btn-quality');
+  if (b) b.textContent = low ? '⚙ Graphics: Low (fast)' : '⚙ Graphics: High';
+}
 addEventListener('resize', resize);
-resize();
+applyQuality();
 
 // ------------------------------------------------------------ module API (see API.md)
 const G = {
@@ -1291,6 +1367,7 @@ function renderDiffs(el) {
 }
 function showMenu() {
   mode = 'menu';
+  musicStop();
   if (S && !S.demo) { try { PU.clear(G); } catch (e) { console.error(e); } }
   S = null;
   clearWorld();
@@ -1316,11 +1393,15 @@ function startGame() {
   $('boss-bar').classList.add('hidden');
   $('buffs').innerHTML = '';
   lastHud = lastBuffs = '';
+  lastCombo = -1;
+  musicStart();
+  musicIntensity(chosenStart >= 30 ? 1 : 0);
 }
-function pause() { if (mode !== 'play') return; mode = 'paused'; show(['hud', 'pause']); }
-function resume() { mode = 'play'; show(['hud']); last = performance.now(); }
+function pause() { if (mode !== 'play') return; mode = 'paused'; show(['hud', 'pause']); musicStop(); }
+function resume() { mode = 'play'; show(['hud']); last = performance.now(); musicStart(); musicIntensity(S && S.boss ? 2 : S && S.wave >= 30 ? 1 : 0); }
 function endRun() {
   mode = 'dead';
+  musicStop();
   const earned = Math.floor(S.coins);
   save.coins += earned;
   const reached = S.wave;
@@ -1338,7 +1419,7 @@ function endRun() {
   $('d-bosses').textContent = S.bosses;
   $('d-peak').textContent = fmt(S.peak);
   $('d-coins').textContent = fmt(earned);
-  $('d-bonus').textContent = `${S.diff.name}${bonus}`;
+  $('d-bonus').textContent = `${S.diff.name} · Best combo ${S.bestCombo}${bonus}`;
   $('boss-bar').classList.add('hidden');
   renderQuick();
   renderChips($('death-chips'));
@@ -1377,6 +1458,7 @@ $('d-menu').onclick = () => { sfx('click'); showMenu(); };
 $('btn-pause').onclick = pause;
 $('p-resume').onclick = resume;
 $('p-quit').onclick = () => { resume(); S.allies.length = 0; S.reserve = 0; S.secondWindUsed = true; };
+$('btn-quality').onclick = () => { save.quality = save.quality === 'low' ? 'high' : 'low'; persist(); applyQuality(); sfx('click'); };
 $('btn-mute').onclick = () => { save.mute = !save.mute; persist(); $('btn-mute').textContent = save.mute ? '🔇 Sound off' : '🔊 Sound on'; };
 
 chosenStart = startWaves().includes(save.startWave) ? save.startWave : 1;
