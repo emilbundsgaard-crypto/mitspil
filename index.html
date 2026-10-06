@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Squad Rush</title>
+<meta name="description" content="Endless wave survival runner with a massive tech tree.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Nunito:wght@600;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
+</head>
+<body>
+<div id="game"></div>
+
+<!-- In-game HUD -->
+<div id="hud" class="hidden">
+  <div class="hud-top">
+    <button id="btn-pause" class="icon-btn" title="Pause (P)">❚❚</button>
+    <div class="wave-bar">
+      <div class="wave-fill" id="wave-fill"></div>
+      <div class="wave-label" id="wave-label">WAVE 1</div>
+    </div>
+    <div class="coin-pill"><span class="coin-ico"></span><span id="hud-coins">0</span></div>
+  </div>
+  <div id="boss-bar" class="boss-bar hidden">
+    <div class="boss-name" id="boss-name">BOSS</div>
+    <div class="boss-track"><div class="boss-fill" id="boss-fill"></div></div>
+  </div>
+  <div class="hud-bottom">
+    <div class="weapon-pill"><span id="hud-weapon-ico">🔫</span><div><div class="wp-name" id="hud-weapon">PISTOL</div><div class="wp-stats" id="hud-wstats">DMG 100</div></div></div>
+    <button id="btn-strike" class="ability hidden" title="Airstrike (Space)"><span class="ab-ico">✈️</span><span class="ab-key">SPACE</span><div class="ab-cd" id="strike-cd"></div></button>
+    <button id="btn-nuke" class="ability hidden" title="Nuke (N)"><span class="ab-ico">☢️</span><span class="ab-key">N</span><div class="ab-cd" id="nuke-cd"></div></button>
+  </div>
+  <div id="buffs" class="buffs"></div>
+  <div id="squad-bubble" class="squad-bubble">1</div>
+  <div id="floaters"></div>
+  <div id="banner" class="banner"></div>
+</div>
+
+<!-- Main menu -->
+<div id="menu" class="screen">
+  <div class="menu-card">
+    <div class="logo"><span class="l1">SQUAD</span><span class="l2">RUSH</span></div>
+    <div class="tagline">Endless waves. 18 weapons. Tanks. Insane bosses up to wave 200.</div>
+    <div class="menu-stats">
+      <div><b id="menu-best">0</b><span>Best wave</span></div>
+      <div><b id="menu-coins">0</b><span>Coins</span></div>
+      <div><b id="menu-tech">0</b><span>Upgrades</span></div>
+    </div>
+    <div class="start-wave">
+      <div class="sw-title">Difficulty</div>
+      <div class="diff-row" id="menu-diff"></div>
+    </div>
+    <div class="start-wave">
+      <div class="sw-title">Start at wave</div>
+      <div class="sw-chips" id="menu-chips"></div>
+    </div>
+    <button class="big-btn play" id="btn-play">PLAY</button>
+    <button class="big-btn tech" id="btn-tech">TECH TREE</button>
+    <div class="controls-hint">Move: mouse / drag / A-D / ←→ · Airstrike: SPACE · Nuke: N · Pause: P</div>
+    <button class="link-btn" id="btn-mute">🔊 Sound on</button>
+  </div>
+</div>
+
+<!-- Death screen -->
+<div id="death" class="screen hidden">
+  <div class="death-card">
+    <div class="death-title">SQUAD WIPED!</div>
+    <div class="death-wave">You reached <b>WAVE <span id="d-wave">1</span></b></div>
+    <div class="death-new hidden" id="d-newbest">★ NEW BEST ★</div>
+    <div class="death-grid">
+      <div><b id="d-kills">0</b><span>Kills</span></div>
+      <div><b id="d-bosses">0</b><span>Bosses</span></div>
+      <div><b id="d-peak">0</b><span>Peak squad</span></div>
+      <div><b id="d-coins">0</b><span>Coins earned</span></div>
+    </div>
+    <div class="death-bonus" id="d-bonus"></div>
+    <div class="quick-title">Quick upgrades</div>
+    <div class="quick-row" id="d-quick"></div>
+    <div class="start-wave">
+      <div class="sw-title">Start at wave</div>
+      <div class="sw-chips" id="death-chips"></div>
+    </div>
+    <div class="death-btns">
+      <button class="big-btn tech" id="d-tech">TECH TREE</button>
+      <button class="big-btn play" id="d-retry">RETRY</button>
+    </div>
+    <button class="link-btn" id="d-menu">Main menu</button>
+  </div>
+</div>
+
+<!-- Pause -->
+<div id="pause" class="screen hidden">
+  <div class="menu-card small">
+    <div class="death-title" style="color:#fff">PAUSED</div>
+    <button class="big-btn play" id="p-resume">RESUME</button>
+    <button class="big-btn tech" id="p-quit">GIVE UP</button>
+  </div>
+</div>
+
+<!-- Tech tree -->
+<div id="tech" class="hidden">
+  <div class="tech-top">
+    <button class="icon-btn" id="tech-back">✕</button>
+    <div class="tech-title">TECH TREE</div>
+    <div class="tech-progress" id="tech-progress">0 / 0</div>
+    <div class="coin-pill"><span class="coin-ico"></span><span id="tech-coins">0</span></div>
+  </div>
+  <div class="tech-legend">
+    <span><i style="background:#ffb020"></i>Squad</span>
+    <span><i style="background:#ff4d5e"></i>Firepower</span>
+    <span><i style="background:#a46bff"></i>Weapons</span>
+    <span><i style="background:#2fd27a"></i>Economy</span>
+    <span><i style="background:#28c4ff"></i>Gates</span>
+    <span><i style="background:#8aa0b8"></i>Defense</span>
+    <span><i style="background:#ff7ad9"></i>Wave skip</span>
+    <span class="hint">Drag to pan · wheel / pinch to zoom</span>
+  </div>
+  <div id="tech-view"><div id="tech-world"><svg id="tech-lines"></svg><div id="tech-nodes"></div></div></div>
+  <div id="tech-panel" class="hidden">
+    <div class="tp-head"><div class="tp-icon" id="tp-icon"></div><div><div class="tp-name" id="tp-name"></div><div class="tp-level" id="tp-level"></div></div></div>
+    <div class="tp-desc" id="tp-desc"></div>
+    <div class="tp-effect" id="tp-effect"></div>
+    <div class="tp-req" id="tp-req"></div>
+    <button class="big-btn play" id="tp-buy">BUY</button>
+  </div>
+</div>
+
+<div id="loading" class="screen"><div class="loader">LOADING…</div></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
