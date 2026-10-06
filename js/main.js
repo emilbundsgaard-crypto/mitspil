@@ -1,6 +1,10 @@
 // Squad Rush: endless wave runner-shooter.
 import * as THREE from 'three';
 import { RoomEnvironment } from '../vendor/addons/RoomEnvironment.js';
+import { EffectComposer } from '../vendor/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from '../vendor/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from '../vendor/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from '../vendor/addons/postprocessing/OutputPass.js';
 import * as models from './models.js';
 import { save, persist, fmt } from './save.js';
 import { sfx, unlockAudio, musicStart, musicStop, musicIntensity } from './audio.js';
@@ -67,6 +71,16 @@ scene.add(sun, sun.target);
 
 const env = new Environment(scene);
 
+// bloom post-processing (High quality only); multisampled HDR target keeps edges smooth
+const composerTarget = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 });
+const composer = new EffectComposer(renderer, composerTarget);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.45, 0.35, 1.25);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+let useBloom = true;
+const glowK = () => (useBloom ? 3 : 1);
+
 const allyR = new UnitRenderer(scene, soldierGeos(PALETTES.ally), RENDER_ALLIES, { armed: 0, key: 'ally' });
 const heroR = new UnitRenderer(scene, soldierGeos(PALETTES.hero), 1, { armed: 0, key: 'hero' });
 const enemyR = {
@@ -109,6 +123,29 @@ for (let i = 0; i < 40; i++) {
   scene.add(z);
   zapPool.push({ m: z, t: 1 });
 }
+const SMOKE_MAX = 300;
+const smokeMesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, flatShading: true, transparent: true, opacity: 0.6, depthWrite: false }), SMOKE_MAX);
+smokeMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(SMOKE_MAX * 3), 3);
+smokeMesh.frustumCulled = false;
+smokeMesh.count = 0;
+scene.add(smokeMesh);
+const smoke = [];
+const FLASH_MAX = 80;
+const flashGeo = (() => {
+  const a = new THREE.PlaneGeometry(1, 0.42);
+  const b = a.clone().rotateX(Math.PI / 2);
+  const c = new THREE.PlaneGeometry(0.42, 0.42).rotateY(Math.PI / 2);
+  const g = models.merge([a, b, c].map((x) => { x.deleteAttribute('uv'); return x.toNonIndexed(); }));
+  g.translate(0, 0, -0.35);
+  g.rotateY(Math.PI / 2);
+  return g;
+})();
+const flashMesh = new THREE.InstancedMesh(flashGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }), FLASH_MAX);
+flashMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(FLASH_MAX * 3), 3);
+flashMesh.frustumCulled = false;
+flashMesh.count = 0;
+scene.add(flashMesh);
+const flashes = [];
 const muzzle = new THREE.PointLight(0xffc060, 0, 12);
 scene.add(muzzle);
 const shieldBubble = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), new THREE.MeshBasicMaterial({ color: 0x7fe8ff, transparent: true, opacity: 0.18, blending: THREE.AdditiveBlending, depthWrite: false }));
@@ -135,6 +172,8 @@ function newRun(startWave, demo = false) {
   stats = getStats();
   if (S && !S.demo) { try { PU.clear(G); } catch (e) { console.error(e); } }
   clearWorld();
+  smoke.length = 0;
+  flashes.length = 0;
   S = {
     wave: startWave, startWave, dist: 0, waveStart: 0, events: [], evIdx: 0, speed: BASE_SPEED,
     squadX: 0, targetX: 0, allies: [], reserve: 0, enemies: [], bullets: [], gates: [], barrels: [], parts: [], grenades: [], bombs: [],
@@ -496,6 +535,7 @@ function fire(dt) {
     const sx = a.x + 0.09, sz = a.z - 0.75;
     const dx = tx - sx, dz = tz - sz;
     const len = Math.hypot(dx, dz) || 1;
+    if (flashes.length < FLASH_MAX && i < 40) flashes.push({ x: a.x + 0.095, y: 0.74, z: a.z - 0.86, yaw: Math.atan2(dx, dz) + Math.PI, roll: rand(0, 3), s: (W.rocket || W.arc ? 0.7 : W.pellets ? 0.55 : 0.36) * rand(0.8, 1.2), t: 0.05, c: W.color });
     const crit = Math.random() < stats.crit;
     const bd = dmgEach * (crit ? stats.critMult : 1);
     if (W.arc) {
@@ -630,12 +670,68 @@ function killBoss() {
 function explosion(x, y, z, r, color = 0xffa030) {
   const fx = fxPool.find((f) => f.t >= f.life) || fxPool[0];
   fx.t = 0; fx.life = 0.5; fx.r = r;
-  fx.ball.material.color.setHex(color);
+  fx.ball.material.color.setHex(color).multiplyScalar(glowK());
   fx.ball.visible = fx.ring.visible = true;
   fx.ball.position.set(x, y, z);
   fx.ring.position.set(x, 0.08, z);
   burst(x, y, z, 0xffd27a, 10, 7);
-  burst(x, y, z, 0x555555, 6, 4);
+  burst(x, y, z, 0xff8a2a, 6, 10, 0.35);
+  puff(x, y, z, r, Math.min(6, 2 + Math.round(r)));
+}
+function puff(x, y, z, r, n) {
+  for (let i = 0; i < n; i++) {
+    if (smoke.length >= SMOKE_MAX) smoke.shift();
+    const life = rand(0.35, 0.65);
+    smoke.push({ x: x + rand(-r, r) * 0.4, y: Math.max(0.4, y + rand(0, r * 0.3)), z: z + rand(-r, r) * 0.4, vx: rand(-1, 1), vy: rand(2.5, 4.5), vz: rand(-1, 1), s: Math.min(0.9, r * rand(0.12, 0.22)), life, max: life, grey: rand(0.6, 0.85) });
+  }
+}
+const _fire = new THREE.Color(0xffa040), _smk = new THREE.Color();
+function updateSmoke(dt) {
+  let n = 0;
+  for (let i = smoke.length - 1; i >= 0; i--) {
+    const p = smoke[i];
+    p.life -= dt;
+    if (p.life <= 0) { smoke[i] = smoke[smoke.length - 1]; smoke.pop(); continue; }
+    p.x += p.vx * dt; p.y += p.vy * dt; p.z += (p.vz + (S ? S.speed : 0)) * dt;
+    p.vx *= 0.97; p.vy *= 0.97; p.vz *= 0.97;
+  }
+  for (const p of smoke) {
+    const k = 1 - p.life / p.max;
+    const sc = p.s * (0.7 + k * 1.3) * Math.min(1, (p.life / p.max) / 0.35) * Math.min(1, k / 0.08 + 0.2);
+    _quat.identity();
+    _sv.set(sc, sc, sc); _pv.set(p.x, p.y, p.z);
+    _mat.compose(_pv, _quat, _sv);
+    smokeMesh.setMatrixAt(n, _mat);
+    _smk.setRGB(p.grey, p.grey, p.grey * 1.05);
+    if (k < 0.3) _smk.lerp(_fire, 1 - k / 0.3);
+    smokeMesh.setColorAt(n, _smk);
+    n++;
+  }
+  smokeMesh.count = n;
+  smokeMesh.instanceMatrix.needsUpdate = true;
+  if (smokeMesh.instanceColor) smokeMesh.instanceColor.needsUpdate = true;
+}
+function updateFlashes(dt) {
+  let n = 0;
+  for (let i = flashes.length - 1; i >= 0; i--) {
+    const f = flashes[i];
+    f.t -= dt;
+    if (f.t <= 0) { flashes[i] = flashes[flashes.length - 1]; flashes.pop(); continue; }
+  }
+  for (const f of flashes) {
+    _eu.set(0, f.yaw, f.roll);
+    _quat.setFromEuler(_eu);
+    const sc = f.s * (0.6 + f.t / 0.06 * 0.6);
+    _sv.set(sc, sc, sc); _pv.set(f.x, f.y, f.z);
+    _mat.compose(_pv, _quat, _sv);
+    flashMesh.setMatrixAt(n, _mat);
+    _col.setHex(f.c).multiplyScalar(glowK() * 0.55);
+    flashMesh.setColorAt(n, _col);
+    n++;
+  }
+  flashMesh.count = n;
+  flashMesh.instanceMatrix.needsUpdate = true;
+  if (flashMesh.instanceColor) flashMesh.instanceColor.needsUpdate = true;
 }
 function areaDamage(x, z, r, dmg, o = {}) {
   if (!o.noFx) explosion(x, 0.8, z, r, o.color ?? 0xffa030);
@@ -658,6 +754,7 @@ function zap(x1, z1, x2, z2) {
   Z.m.scale.set(1 + Math.random(), 1, len);
   Z.m.rotation.set(0, Math.atan2(x2 - x1, z2 - z1), rand(-0.5, 0.5));
   Z.m.visible = true;
+  Z.m.material.color.setHex(0x9fe4ff).multiplyScalar(glowK());
   Z.t = 0;
 }
 function chainFrom(e, dmg, n) {
@@ -1071,7 +1168,7 @@ function drawCrowds() {
     bulletGlow.setMatrixAt(n, _mat);
     _col.setHex(b.color);
     bulletGlow.setColorAt(n, _col);
-    _col.lerp(WHITE_C, 0.3);
+    _col.lerp(WHITE_C, 0.3).multiplyScalar(glowK());
     bulletCore.setColorAt(n, _col);
     n++;
   }
@@ -1249,7 +1346,7 @@ function frame(now) {
       if (S.overT > 1.3) endRun();
     } else stepGame(dt);
   } else if (mode === 'menu') menuDemo(dt);
-  if (S && mode !== 'paused') { updateParts(dt); updateFx(dt); }
+  if (S && mode !== 'paused') { updateParts(dt); updateFx(dt); updateSmoke(dt); updateFlashes(dt); }
   if (mode !== 'paused') updateFloaters(dt);
   updateHud(dt);
   drawCrowds();
@@ -1258,7 +1355,7 @@ function frame(now) {
   const zoom = S ? clamp(S.radius * 0.35, 0, 1.6) : 0;
   camera.position.set(CAM_BASE.x + sx + (Math.random() - 0.5) * shake * 0.6, CAM_BASE.y + zoom * 1.4 + (Math.random() - 0.5) * shake * 0.6, CAM_BASE.z + zoom);
   camera.lookAt(CAM_LOOK.x + sx * 0.8, CAM_LOOK.y, CAM_LOOK.z);
-  renderer.render(scene, camera);
+  if (useBloom) composer.render(); else renderer.render(scene, camera);
 }
 function menuDemo(dt) {
   if (!S) newRun(1, true);
@@ -1271,6 +1368,8 @@ function menuDemo(dt) {
 function resize() {
   const w = innerWidth, h = innerHeight;
   renderer.setSize(w, h);
+  composer.setPixelRatio(renderer.getPixelRatio());
+  composer.setSize(w, h);
   camera.aspect = w / h;
   const need = Math.max(1, 0.95 / camera.aspect);
   camera.fov = clamp(2 * Math.atan(Math.tan((50 * Math.PI) / 360) * need) * (180 / Math.PI), 50, 92);
@@ -1280,6 +1379,7 @@ function applyQuality() {
   const low = save.quality === 'low';
   renderer.setPixelRatio(low ? 1 : Math.min(window.devicePixelRatio, 1.75));
   sun.castShadow = !low;
+  useBloom = !low;
   resize();
   const b = document.getElementById('btn-quality');
   if (b) b.textContent = low ? '⚙ Graphics: Low (fast)' : '⚙ Graphics: High';

@@ -707,6 +707,22 @@ export class Environment {
     sky.position.z = -80;
     scene.add(sky);
     this.sky = sky;
+    const sunTex = canvasTex(256, 256, (g, w, h) => {
+      const grd = g.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+      grd.addColorStop(0, 'rgba(255,255,255,1)');
+      grd.addColorStop(0.17, 'rgba(255,255,255,1)');
+      grd.addColorStop(0.21, 'rgba(255,255,255,.5)');
+      grd.addColorStop(0.5, 'rgba(255,255,255,.12)');
+      grd.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = grd;
+      g.fillRect(0, 0, w, h);
+    }, false);
+    this.sunMat = new THREE.SpriteMaterial({ map: sunTex, color: 0xfff3c4, transparent: true, depthWrite: false, fog: false, blending: THREE.AdditiveBlending });
+    this.sunSprite = new THREE.Sprite(this.sunMat);
+    this.sunSprite.position.set(75, 72, -330);
+    this.sunSprite.scale.setScalar(120);
+    this.sunSprite.renderOrder = -9;
+    scene.add(this.sunSprite);
     this.cloudGeo = merge([sph(5, 0xffffff, 0, 0, 0, 1.6, 0.8, 1, 10), sph(4, 0xffffff, 5, -0.8, 0, 1.4, 0.8, 1, 10), sph(3.5, 0xffffff, -5.5, -1, 0.5, 1.3, 0.8, 1, 10), sph(3, 0xffffff, 2, 2, 0, 1.4, 0.9, 1, 10)]);
     this.cloudMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, transparent: true, opacity: 0.92, fog: false });
     this.clouds = new THREE.InstancedMesh(this.cloudGeo, this.cloudMat, 14);
@@ -852,6 +868,7 @@ export class Environment {
     this.barMat.color.setHex(r.bar || 0xffffff);
     this.barMat.emissive.setHex(r.glow ? r.bar : 0);
     this.clouds.visible = b.ground !== 'neon';
+    this.sunMat.color.setHex(b.ground === 'neon' ? 0xff4fd8 : b.ground === 'lava' ? 0xff5a1a : b.ground === 'snow' ? 0xffffff : 0xfff1c0);
     this.cloudMat.color.setHex(b.ground === 'lava' ? 0x5a4040 : 0xffffff);
     drawRoad(this.roadCanvas.getContext('2d'), 512, 1024, b.road);
     this.roadTex.needsUpdate = true;
